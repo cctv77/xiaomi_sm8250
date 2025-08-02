@@ -147,7 +147,7 @@ elif [[ "$KSU_VERSION" == "sukisu-ultra" ]]; then
     KSU_MAKEFILE_PATH="KernelSU/kernel/Makefile"
     if [ -f "$KSU_MAKEFILE_PATH" ]; then
         # 直接覆盖所有KSU_VERSION_FULL定义
-        sed -i "s|KSU_VERSION_FULL :=.*|KSU_VERSION_FULL := v\$(KSU_VERSION_API)-敲击岁月@🐉|" "$KSU_MAKEFILE_PATH"
+        sed -i "s|KSU_VERSION_FULL :=.*|KSU_VERSION_FULL := 敲⃝击⃝岁⃝月⃝|" "$KSU_MAKEFILE_PATH"
         echo "Makefile修改成功"
     else
         echo "警告：KernelSU Makefile未找到，无法设置自定义版本"
@@ -175,7 +175,7 @@ Build_AOSP(){
     
     echo 1 > out/.version
 
-    export KBUILD_BUILD_VERSION="1" LOCALVERSION="-g92c089fc2d37" KBUILD_BUILD_USER="BMv" KBUILD_BUILD_HOST="root" KBUILD_BUILD_TIMESTAMP="6月5日，周三13:27:08 UTC 2024"
+    export KBUILD_BUILD_VERSION="1" LOCALVERSION="-g92c089fc2d37" KBUILD_BUILD_USER="xiaomi" KBUILD_BUILD_HOST="root" KBUILD_BUILD_TIMESTAMP="6月5日，周三13:27:08 UTC 2024"
 
     make $MAKE_ARGS -j$(nproc)
 
