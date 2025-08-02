@@ -129,14 +129,30 @@ elif [ "$KSU_VERSION" == "sukisu" ]; then
     KSU_ZIP_STR=SukiSU
     echo "SukiSU is enabled"
     curl -LSs "https://raw.githubusercontent.com/ShirkNeko/KernelSU/main/kernel/setup.sh" | bash -s dev
-elif [[ "$KSU_VERSION" == "sukisu-ultra" && "$SuSFS_ENABLE" -eq 1 ]]; then
-    KSU_ZIP_STR="SukiSU-Ultra"
-    echo "SukiSU-Ultra && SuSFS is enabled"
-    curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-elif [ "$KSU_VERSION" == "sukisu-ultra" ]; then
-    KSU_ZIP_STR=SukiSU-Ultra
-    echo "SukiSU-Ultra is enabled"
-    curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s nongki
+elif [[ "$KSU_VERSION" == "sukisu-ultra" ]]; then
+    # 设置分支名称
+    if [[ "$SuSFS_ENABLE" -eq 1 ]]; then
+        KSU_BRANCH="susfs-main"
+        KSU_ZIP_STR="SukiSU-Ultra_SuSFS"
+    else
+        KSU_BRANCH="nongki"
+        KSU_ZIP_STR="SukiSU-Ultra"
+    fi
+    
+    echo "SukiSU-Ultra is enabled (Branch: $KSU_BRANCH)"
+    curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$KSU_BRANCH"
+    
+    # 直接设置版本字符串
+    echo "设置KernelSU版本字符串..."
+    KSU_MAKEFILE_PATH="KernelSU/kernel/Makefile"
+    if [ -f "$KSU_MAKEFILE_PATH" ]; then
+        # 直接覆盖所有KSU_VERSION_FULL定义
+        sed -i "s|KSU_VERSION_FULL :=.*|KSU_VERSION_FULL := v\$(KSU_VERSION_API)-敲击岁月@🐉|" "$KSU_MAKEFILE_PATH"
+        echo "Makefile修改成功"
+    else
+        echo "警告：KernelSU Makefile未找到，无法设置自定义版本"
+    fi
+
 else
     KSU_ZIP_STR=NoKernelSU
     echo "KSU is disabled"
@@ -149,13 +165,6 @@ rm -rf anykernel/
 
 echo "Clone AnyKernel3 for packing kernel (repo: https://github.com/liyafe1997/AnyKernel3)"
 git clone https://github.com/liyafe1997/AnyKernel3 -b kona --single-branch --depth=1 anykernel
-
-# Add date to local version
-local_version_str="-perf"
-local_version_date_str="-$(date +%Y%m%d)-${GIT_COMMIT_ID}-perf"
-
-sed -i "s/${local_version_str}/${local_version_date_str}/g" arch/arm64/configs/${TARGET_DEVICE}_defconfig
-
 
 Build_AOSP(){
 # ------------- Building for AOSP -------------
