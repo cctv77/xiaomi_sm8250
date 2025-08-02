@@ -1,6 +1,6 @@
 name: Auto-Clean Repository
 
-于:
+on:
   schedule:
     - cron: '0 16,4 * * *'  # 每天UTC 04:00 & 16:00 (北京时间12:00 & 00:00)
   workflow_dispatch:
