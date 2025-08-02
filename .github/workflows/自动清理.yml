@@ -1,0 +1,54 @@
+name: Repository Auto-Cleanup
+on:
+  schedule:
+    # 每天 UTC 时间 16:00 和 04:00 执行（对应北京时间 00:00 和 12:00）
+    - cron: '0 16,4 * * *'
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      packages: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Auto-Clean Workflows
+        uses: rokroskar/workflow-run-cleaner-action@v1
+        with:
+          keep_days: '0'  # 立即删除所有工作流程
+          only_completed: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Auto-Clean Caches
+        uses: actions/cache@v3
+        with:
+          path: '**'
+          key: cleanup-${{ github.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Auto-Clean Tags and Releases
+        run: |
+          # 获取所有 tags
+          tags=$(git tag -l)
+          for tag in $tags; do
+            echo "Deleting tag: $tag"
+            git push origin :refs/tags/$tag
+            git tag -d $tag
+          done
+          
+          # 获取所有 releases
+          releases=$(gh release list --limit 1000 --json tagName -q '.[].tagName')
+          for release in $releases; do
+            echo "Deleting release: $release"
+            gh release delete $release --cleanup-tag --yes
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
