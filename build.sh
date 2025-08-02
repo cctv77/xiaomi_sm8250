@@ -173,6 +173,10 @@ Build_AOSP(){
 
     SET_CONFIG
     
+    echo 1 > out/.version
+
+    export KBUILD_BUILD_VERSION="1" LOCALVERSION="-g92c089fc2d37" KBUILD_BUILD_USER="BMv" KBUILD_BUILD_HOST="root" KBUILD_BUILD_TIMESTAMP="6月5日，周三13:27:08 UTC 2024"
+
     make $MAKE_ARGS -j$(nproc)
 
     Image_Repack
@@ -251,6 +255,10 @@ Build_MIUI(){
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
 
     SET_CONFIG MIUI
+   
+    echo 1 > out/.version
+
+    export KBUILD_BUILD_VERSION="1" LOCALVERSION="-g92c089fc2d37" KBUILD_BUILD_USER="BMv" KBUILD_BUILD_HOST="root" KBUILD_BUILD_TIMESTAMP="Wed Jun 5 13:27:08 UTC 2024"
 
     make $MAKE_ARGS -j$(nproc)
 
