@@ -1,13 +1,12 @@
-name: Auto-Clean Repository (China Time)
+name: Auto-Clean Repository
 
 on:
   schedule:
-    # 北京时间每天0点和12点执行 (UTC 16:00和04:00)
-    - cron: '0 16,4 * * *'  
-  workflow_dispatch:  # 支持手动触发
+    - cron: '0 16,4 * * *'
+  workflow_dispatch:
 
 jobs:
-  aggressive-cleanup:
+  cleanup:
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -15,51 +14,51 @@ jobs:
       packages: write
       
     steps:
-      # 安装必要工具
-      - name: Setup environment
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Install GitHub CLI
+        run: sudo apt-get install gh -y
 
-      # GitHub CLI认证
-      - name: Authenticate GH CLI
+      - name: Purge all workflow runs
         run: |
-          gh auth login --with-token <<< "$GH_TOKEN"
+          current_run=${{ github.run_id }}
+          gh run list --limit 500 --json databaseId -q '.[].databaseId' | \
+          while read run_id; do
+            if [ "$run_id" != "$current_run" ]; then
+              gh api -X DELETE "/repos/${{ github.repository }}/actions/runs/$run_id" \
+                -H "Authorization: Bearer $GH_TOKEN"
+            fi
+          done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1. 清除所有工作流历史（排除当前运行）
-      - name: Purge ALL workflow runs
+      - name: Clear all caches
         run: |
-          current_run=${{ github.run_id }}
-          gh run list -L 300 --json databaseId -q '.[].databaseId' | \
-          while read run_id; do
-            if [ "$run_id" != "$current_run" ]; then
-              gh run delete $run_id --confirm
-            fi
-          done
-
-      # 2. 清除所有缓存
-      - name: Clear ALL caches
-        run: |
-          gh api -H "Accept: application/vnd.github+json" \
-            /repos/$GITHUB_REPOSITORY/actions/caches \
+          gh api /repos/${{ github.repository }}/actions/caches \
             --paginate -q '.cache_entries[].id' | \
-          xargs -I {} gh api -X DELETE \
-            /repos/$GITHUB_REPOSITORY/actions/caches/{} \
-            --silent
+          while read cache_id; do
+            gh api -X DELETE "/repos/${{ github.repository }}/actions/caches/$cache_id" \
+              -H "Authorization: Bearer $GH_TOKEN"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 检出仓库用于标签操作
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      # 4. 删除所有发布和标签
-      - name: Remove ALL releases and tags
+      - name: Remove all releases and tags
         run: |
-          # 删除所有发布
-          gh release list -L 300 --json tagName -q '.[].tagName' | \
-          xargs -I {} gh release delete {} -y --cleanup-tag
+          gh api "/repos/${{ github.repository }}/releases?per_page=100" \
+            --paginate -q '.[].id' | \
+          while read release_id; do
+            gh api -X DELETE "/repos/${{ github.repository }}/releases/$release_id" \
+              -H "Authorization: Bearer $GH_TOKEN"
+          done
           
-          # 删除所有标签
-          git tag -l | xargs -n 1 git push --delete origin
-          git tag | xargs git tag -d
+          git ls-remote --tags origin | awk '{print $2}' | sed 's|^refs/tags/||' | \
+          while read tag; do
+            git push origin ":refs/tags/$tag"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
