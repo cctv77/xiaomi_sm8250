@@ -1,63 +1,46 @@
-name: Auto-Clean Repository
+name: Nuclear Clean
 
 on:
   schedule:
-    - cron: '0 16,4 * * *'
+    - cron: '0 16,4 * * *'  # 北京 0:00/12:00
   workflow_dispatch:
 
 jobs:
-  cleanup:
+  obliterate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
-      actions: write  # 删除运行和缓存必须的权限
-      contents: write  # 修改仓库内容必须的权限
-      
+      actions: write
+      contents: write
+
     steps:
-      - name: Install GitHub CLI
-        run: sudo apt-get install gh -y
-
-      - name: Purge all workflow runs
+      - name: Nuclear cleanup
         run: |
-          current_run=${{ github.run_id }}
-          gh run list --limit 500 --json databaseId -q '.[].databaseId' | \
-          while read run_id; do
-            if [ "$run_id" != "$current_run" ]; then
-              gh api -X DELETE "/repos/${{ github.repository }}/actions/runs/$run_id" \
-                -H "Authorization: Bearer $GH_TOKEN"
-            fi
-          done
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 1. 安装单文件工具包（gh+jq）
+          curl -Ls https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+          sudo apt update && sudo apt install gh jq -y
 
-      - name: Clear all caches
-        run: |
-          gh api /repos/${{ github.repository }}/actions/caches \
+          # 2. 删除所有工作流记录（保留当前运行）
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/runs?per_page=100" \
+            --paginate -q ".workflow_runs[] | select(.id != $RUN_ID) | .id" | \
+            xargs -I {} gh api -X DELETE "/repos/$REPO/actions/runs/{}" -H "Authorization: Bearer $GH_TOKEN"
+
+          # 3. 清除所有缓存（API直接操作）
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/caches" \
             --paginate -q '.cache_entries[].id' | \
-          while read cache_id; do
-            gh api -X DELETE "/repos/${{ github.repository }}/actions/caches/$cache_id" \
-              -H "Authorization: Bearer $GH_TOKEN"
-          done
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            xargs -I {} gh api -X DELETE "/repos/$REPO/actions/caches/{}" -H "Authorization: Bearer $GH_TOKEN"
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Remove all releases and tags
-        run: |
-          gh api "/repos/${{ github.repository }}/releases?per_page=100" \
+          # 4. 删除所有发布（跳过检出）
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" \
             --paginate -q '.[].id' | \
-          while read release_id; do
-            gh api -X DELETE "/repos/${{ github.repository }}/releases/$release_id" \
-              -H "Authorization: Bearer $GH_TOKEN"
-          done
-          
-          git ls-remote --tags origin | awk '{print $2}' | sed 's|^refs/tags/||' | \
-          while read tag; do
-            git push origin ":refs/tags/$tag"
-          done
+            xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}" -H "Authorization: Bearer $GH_TOKEN"
+
+          # 5. 删除所有标签（直接远程操作）
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/git/refs/tags?per_page=100" \
+            --paginate -q '.[].ref' | \
+            xargs -I {} gh api -X DELETE "/repos/$REPO/git/{}" -H "Authorization: Bearer $GH_TOKEN"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
