@@ -9,9 +9,8 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     permissions:
-      actions: write
-      contents: write
-      packages: write
+      actions: write  # 删除运行和缓存必须的权限
+      contents: write  # 修改仓库内容必须的权限
       
     steps:
       - name: Install GitHub CLI
