@@ -2,8 +2,8 @@ name: Repository Cleanup
 
 on:
   schedule:
-    - cron: '0 0 * * *'
-    - cron: '0 12 * * *'
+    - cron: '0 0 * * *'  # UTC 0点 → 中国时间8点
+    - cron: '0 12 * * *' # UTC 12点 → 中国时间20点
   workflow_dispatch:
 
 permissions:
@@ -14,12 +14,12 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # 必须获取所有标签历史
 
-      - name: Set up GitHub CLI
+      - name: Install GH CLI
         run: |
           if ! command -v gh &> /dev/null; then
             curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
@@ -27,54 +27,21 @@ jobs:
             sudo apt update && sudo apt install -y gh
           fi
 
-      - name: Authenticate with GitHub CLI
+      - name: Authenticate GH CLI
         run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token --scope repo,workflow
 
-      - name: Get current run ID
-        id: current_run
-        run: echo "current_run_id=${{ github.run_id }}" >> $GITHUB_OUTPUT
-
-      - name: List workflow runs
-        id: list_workflow_runs
+      - name: Clean workflows
         run: |
-          RUN_IDS=$(gh run list --repo "${{ github.repository }}" --all --exclude-event workflow_dispatch,schedule --exclude "${{ steps.current_run.outputs.current_run_id }}" --json databaseId --jq '.[].databaseId')
-          echo "workflow_runs=$RUN_IDS" >> $GITHUB_OUTPUT
+          gh run list --repo "${{ github.repository }}" --all \
+            --exclude-event workflow_dispatch,schedule \
+            --exclude "${{ github.run_id }}" \  # 排除当前任务
+            --json databaseId | jq -r '.[].databaseId' | xargs -I{} gh run delete {} --yes --repo "${{ github.repository }}"
 
-      - name: Delete workflow runs
-        run: |
-          if [ -n "${{ steps.list_workflow_runs.outputs.workflow_runs }}" ]; then
-            for run_id in ${{ steps.list_workflow_runs.outputs.workflow_runs }}; do
-              gh run delete "$run_id" --yes --repo "${{ github.repository }}"
-            done
-          fi
+      - name: Clean releases
+        run: gh release list --repo "${{ github.repository }}" --json id | jq -r '.[].id' | xargs -I{} gh release delete {} --yes --repo "${{ github.repository }}"
 
-      - name: List releases
-        id: list_releases
-        run: |
-          RELEASE_IDS=$(gh release list --repo "${{ github.repository }}" --json id --jq '.[].id')
-          echo "releases=$RELEASE_IDS" >> $GITHUB_OUTPUT
-
-      - name: Delete releases
-        run: |
-          if [ -n "${{ steps.list_releases.outputs.releases }}" ]; then
-            for release_id in ${{ steps.list_releases.outputs.releases }}; do
-              gh release delete "$release_id" --yes --repo "${{ github.repository }}"
-            done
-          fi
-
-      - name: List tags
-        id: list_tags
-        run: |
-          TAG_NAMES=$(gh tag list --repo "${{ github.repository }}" --json name --jq '.[].name')
-          echo "tags=$TAG_NAMES" >> $GITHUB_OUTPUT
-
-      - name: Delete tags
-        run: |
-          if [ -n "${{ steps.list_tags.outputs.tags }}" ]; then
-            for tag_name in ${{ steps.list_tags.outputs.tags }}; do
-              gh tag delete "$tag_name" --force --yes --repo "${{ github.repository }}"
-            done
-          fi
+      - name: Clean tags
+        run: gh tag list --repo "${{ github.repository }}" --json name | jq -r '.[].name' | xargs -I{} gh tag delete {} --force --yes --repo "${{ github.repository }}"
 
       - name: Clean caches
         run: gh cache clean --all --yes --repo "${{ github.repository }}"
