@@ -1,45 +1,36 @@
-name: Fast Cleanup
+name: Clean Repo
 
 on:
   schedule:
-    - cron: '0 3 * * *'  # 凌晨3点执行
+    - cron: '0 0 * * *'  # UTC 0点 → 中国时间8点
+    - cron: '0 12 * * *' # UTC 12点 → 中国时间20点
+  workflow_dispatch:
 
 permissions:
   actions: write
   contents: write
 
 jobs:
-  cleanup:
+  clean:
     runs-on: ubuntu-latest
-    concurrency: cleanup-job  # 限制并发防止速率限制
     steps:
-      - name: Install GH CLI (Cached)
-        uses: actions/cache@v3
+      - name: Setup GH CLI
+        uses: actions/setup-gh@v5
         with:
-          path: /usr/local/bin/gh
-          key: gh-cli-$(uname -m)
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete workflows
         run: |
-          if [ ! -f /usr/local/bin/gh ]; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/githubcli.list > /dev/null
-            sudo apt update && sudo apt install -y gh
-          fi
+          gh run list --repo "${{ github.repository }}" --all --json databaseId \
+          | jq -r '.[].databaseId' \
+          | grep -v "${{ github.run_id }}" \
+          | xargs -I{} gh run delete {} --yes --repo "${{ github.repository }}"
 
-      - name: Parallel Cleanup
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # 并行清理工作流运行(10秒)
-          gh run list --repo $REPO --all --json databaseId | jq -r '.[].databaseId' | xargs -P 10 -I{} gh run delete {} --yes
+      - name: Delete releases
+        run: gh release list --repo "${{ github.repository }}" --json id | jq -r '.[].id' | xargs -I{} gh release delete {} --yes --repo "${{ github.repository }}"
 
-          # 并行清理发布(8秒)
-          gh release list --repo $REPO --json id | jq -r '.[].id' | xargs -P 10 -I{} gh release delete {} --yes
+      - name: Delete tags
+        run: gh tag list --repo "${{ github.repository }}" --json name | jq -r '.[].name' | xargs -I{} gh tag delete {} --force --yes --repo "${{ github.repository }}"
 
-          # 批量删除标签(12秒)
-          gh tag list --repo $REPO --json name | jq -r '.[].name' | xargs -P 10 -I{} gh tag delete {} --force --yes
-
-      - name: Clean Caches (Optimized)
-        run: gh cache clean --all --yes --repo $REPO --exclude "actions/cache/*"  # 保留常用缓存
-
-    variables:
-      REPO: ${{ github.repository }}
+      - name: Clean caches
+        run: gh cache clean --all --yes --repo "${{ github.repository }}"
