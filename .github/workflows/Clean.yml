@@ -8,47 +8,18 @@ on:
 jobs:
   obliterate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 1
     permissions:
       actions: write
       contents: write
       packages: write
 
     steps:
-      - name: Setup GitHub CLI
+      - name: Nuclear Clean
         run: |
-          sudo apt update
-          sudo apt install -y gh
-        if: ${{ !env.ACT }}  # Skip if running locally with ACT
-
-      - name: Clean Workflow Runs
-        run: |
-          current_run=${{ github.run_id }}
-          gh run list --limit 100 --json databaseId -q ".[] | select(.databaseId != $current_run) | .databaseId" |
-            xargs -r gh run delete --yes
+          gh run list -L 100 -q ".[] | select(.databaseId != ${{ github.run_id }}).databaseId" | xargs -r gh run delete -y 2>/dev/null || true
+          gh cache delete -a -f 2>/dev/null || true
+          gh release list -L 100 -q ".[].tagName" | xargs -r gh release delete -y --cleanup-tag 2>/dev/null || true
+          gh api -H "Accept: application/vnd.github.v3+json" "/repos/${{ github.repository }}/tags?per_page=100" -q ".[].name" | xargs -r -I{} gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/{}" 2>/dev/null || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: Clean Action Caches
-        run: gh cache delete --all --confirm
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: Clean Releases
-        run: |
-          gh release list --limit 100 --json id -q ".[].id" |
-            xargs -r gh release delete --yes
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: Clean Tags
-        run: |
-          gh api repos/${{ github.repository }}/git/refs/tags --paginate -q '.[].ref' |
-            sed 's/^refs\/tags\///' |
-            xargs -r -I {} gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/{}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
