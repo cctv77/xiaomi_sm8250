@@ -2,7 +2,7 @@ name: Nuclear Clean
 
 on:
   schedule:
-    - cron: '0 16,4 * * *'  # 北京 0:00/12:00
+    - cron: '0 16,4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -16,35 +16,33 @@ jobs:
     steps:
       - name: Nuclear cleanup
         run: |
-          # 1. 安装单文件工具包（gh+jq）
-          curl -Ls https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo apt update && sudo apt install jq -y
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-          sudo apt update && sudo apt install gh jq -y
+          sudo apt update && sudo apt install gh -y
           
-          # 2. 删除所有工作流记录（保留当前运行）
           gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/runs?per_page=100" \
             --paginate -q ".workflow_runs[] | select(.id != $RUN_ID) | .id" | \
             xargs -I {} gh api -X DELETE "/repos/$REPO/actions/runs/{}" -H "Authorization: Bearer $GH_TOKEN"
           
-          # 3. 清除所有缓存（API直接操作）
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/caches" \
-            --paginate -q '.cache_entries[].id' | \
-            xargs -I {} gh api -X DELETE "/repos/$REPO/actions/caches/{}" -H "Authorization: Bearer $GH_TOKEN"
+          gh api \
+            --method DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "/repos/$REPO/actions/caches" \
+            -f ref="$GITHUB_REF"
           
-          # 4. 删除所有发布（跳过检出）
           gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" \
             --paginate -q '.[].id' | \
             xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}" -H "Authorization: Bearer $GH_TOKEN"
           
-          # 5. 修复：安全删除标签（处理空标签场景）
-          # 先获取标签列表，成功后再执行删除
           if tag_refs=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/git/refs/tags?per_page=100" --paginate -q '.[].ref' 2>/dev/null); then
             [ -n "$tag_refs" ] && echo "$tag_refs" | \
             xargs -I {} gh api -X DELETE "/repos/$REPO/git/{}" -H "Authorization: Bearer $GH_TOKEN"
           else
-            echo "无标签可删除，跳过此步骤"
+            echo "No tags to delete"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          GITHUB_REF: ${{ github.ref }}
