@@ -12,36 +12,49 @@ jobs:
     permissions:
       actions: write
       contents: write
+      packages: write
 
     steps:
-      - name: Nuclear cleanup
+      - name: Cleanup Workflow Runs
         run: |
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list
           sudo apt update
-          sudo apt install jq -y
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-          sudo apt update
-          sudo apt install gh -y
+          sudo apt install gh jq -y
           
           gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/runs?per_page=100" \
             --paginate -q ".workflow_runs[] | select(.id != $RUN_ID) | .id" | \
             xargs -I {} gh api -X DELETE "/repos/$REPO/actions/runs/{}" -H "Authorization: Bearer $GH_TOKEN"
-          
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/caches" \
-            --paginate -q '.cache_entries[].id' | \
-            xargs -I {} gh api -X DELETE "/repos/$REPO/actions/caches/{}" -H "Authorization: Bearer $GH_TOKEN"
-          
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" \
-            --paginate -q '.[].id' | \
-            xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}" -H "Authorization: Bearer $GH_TOKEN"
-          
-          if tag_refs=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/git/refs/tags?per_page=100" --paginate -q '.[].ref' 2>/dev/null); then
-            [ -n "$tag_refs" ] && echo "$tag_refs" | \
-            xargs -I {} gh api -X DELETE "/repos/$REPO/git/{}" -H "Authorization: Bearer $GH_TOKEN"
-          else
-            echo "No tags to delete"
-          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+      
+      - name: Delete All Packages
+        uses: actions/delete-package-versions@v4
+        with:
+          package-names: "*"
+          delete-only-pre-release-versions: false
+          num-versions-to-keep: 0
+        
+      - name: Purge All Caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            **
+          key: nuclear-clean-${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Remove Releases and Tags
+        run: |
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" \
+            --paginate -q '.[].id' | \
+            xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}" -H "Authorization: Bearer $GH_TOKEN"
+          
+          tags=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/tags" --paginate -q '.[].name' 2>/dev/null)
+          [ -n "$tags" ] && echo "$tags" | \
+            xargs -I {} gh api -X DELETE "/repos/$REPO/git/refs/tags/{}" -H "Authorization: Bearer $GH_TOKEN"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
