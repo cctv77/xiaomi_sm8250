@@ -8,67 +8,42 @@ on:
 jobs:
   obliterate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       actions: write
       contents: write
+      packages: write
 
     steps:
-      - name: Install tools
-        run: |
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list
-          sudo apt update
-          sudo apt install gh jq -y
+      # 清理所有工作流运行记录
+      - name: Clean Workflow Runs
+        uses: kachick/delete-workflow-runs@v2
+        with:
+          skip_confirmation: true
+          keep_min_runs: 1  # 保留当前运行
+          ignore_active_runs: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      # 专门清理所有缓存（最核心的部分）
+      - name: Purge All Caches
+        uses: ethomson/clear-gha-caches@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          keep_min_caches: 0
+          remove_older_than: 0
+          force: true
 
-      - name: Cleanup Workflow Runs
-        run: |
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/runs?per_page=100" \
-            --paginate -q ".workflow_runs[] | select(.id != $RUN_ID) | .id" | \
-            xargs -I {} gh api -X DELETE "/repos/$REPO/actions/runs/{}" -H "Authorization: Bearer $GH_TOKEN"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
+      # 清理所有发布
+      - name: Delete All Releases
+        uses: YoavShapira/gh-actions-delete-releases@v1
+        with:
+          keep_min_releases: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Purge All Caches (verified)
-        run: |
-          # 获取所有缓存ID并删除
-          cache_ids=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/caches" \
-            --paginate -q '.cache_entries[].id' 2>/dev/null || true)
-          
-          if [ -n "$cache_ids" ]; then
-            echo "$cache_ids" | xargs -I {} sh -c 'gh api -X DELETE "/repos/$REPO/actions/caches/{}" -H "Authorization: Bearer $GH_TOKEN"'
-            echo "Deleted ${cache_ids} caches"
-          else
-            echo "No caches found"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-
-      - name: Remove Releases
-        run: |
-          release_ids=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" \
-            --paginate -q '.[].id' 2>/dev/null || true)
-          
-          if [ -n "$release_ids" ]; then
-            echo "$release_ids" | xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}" -H "Authorization: Bearer $GH_TOKEN"
-          else
-            echo "No releases found"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          
+      # 清理所有标签
       - name: Delete All Tags
-        run: |
-          tags=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/tags" --paginate -q '.[].name' 2>/dev/null || true)
-          if [ -n "$tags" ]; then
-            echo "$tags" | xargs -I {} gh api -X DELETE "/repos/$REPO/git/refs/tags/{}" -H "Authorization: Bearer $GH_TOKEN"
-          else
-            echo "No tags found"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
+        uses: YoavShapira/gh-actions-delete-tags@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          keep_min_tags: 0
