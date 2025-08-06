@@ -2,43 +2,44 @@ name: Nuclear Clean
 
 on:
   schedule:
-    - cron: '0 16,4 * * *'
+    - cron: '0 16,4 * * *'  # 北京时间0:00和12:00
   workflow_dispatch:
 
 jobs:
   obliterate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     permissions:
       actions: write
       contents: write
       packages: write
 
     steps:
+      # 核心修复：确保正确设置GH_TOKEN
       - name: Setup GH CLI
         run: |
           sudo apt update
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list
           sudo apt update
           sudo apt install -y gh
-          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          gh auth login --with-token <<< "${{ secrets.GITHUB_TOKEN }}"
       
-      - name: Delete Workflow Runs
+      # 完整清理流程（60秒内完成）
+      - name: Clean Everything
         run: |
-          gh api -X DELETE "/repos/${{ github.repository }}/actions/runs?per_page=100" --paginate -q ".workflow_runs[] | select(.id != ${{ github.run_id }}) | .id" | xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/actions/runs/{}"
-      
-      - name: Purge All Caches
-        run: |
-          cache_ids=$(gh api "/repos/${{ github.repository }}/actions/caches" --paginate -q '.cache_entries[].id' 2>/dev/null || true)
-          [ -n "$cache_ids" ] && echo "$cache_ids" | xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/actions/caches/{}"
-      
-      - name: Delete Releases
-        run: |
-          release_ids=$(gh api "/repos/${{ github.repository }}/releases" --paginate -q '.[].id' 2>/dev/null || true)
-          [ -n "$release_ids" ] && echo "$release_ids" | xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/releases/{}"
-      
-      - name: Delete Tags
-        run: |
-          tags=$(gh api "/repos/${{ github.repository }}/tags" --paginate -q '.[].name' 2>/dev/null || true)
-          [ -n "$tags" ] && echo "$tags" | xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/git/refs/tags/{}"
+          # 1. 删除工作流运行记录（保留当前）
+          gh api -X DELETE "/repos/${{ github.repository }}/actions/runs" \
+            --paginate -q "select(.id != ${{ github.run_id }}) | .id" |
+            xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/actions/runs/{}"
+          
+          # 2. 清除所有缓存（核心修复）
+          gh api -X DELETE "/repos/${{ github.repository }}/actions/caches?key="
+          
+          # 3. 删除所有发布
+          gh api "/repos/${{ github.repository }}/releases" --paginate -q ".[].id" |
+            xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/releases/{}"
+          
+          # 4. 删除所有标签
+          gh api "/repos/${{ github.repository }}/tags" --paginate -q ".[].name" |
+            xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/git/refs/tags/{}"
