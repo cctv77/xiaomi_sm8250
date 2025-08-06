@@ -8,42 +8,78 @@ on:
 jobs:
   obliterate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       actions: write
       contents: write
       packages: write
 
     steps:
-      # 清理所有工作流运行记录
-      - name: Clean Workflow Runs
-        uses: kachick/delete-workflow-runs@v2
-        with:
-          skip_confirmation: true
-          keep_min_runs: 1  # 保留当前运行
-          ignore_active_runs: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # 安装 GitHub CLI
+      - name: Install GitHub CLI
+        run: |
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list
+          sudo apt update
+          sudo apt install gh -y
       
-      # 专门清理所有缓存（最核心的部分）
+      # 清理所有工作流运行
+      - name: Clean Workflow Runs
+        run: |
+          gh api -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "/repos/${{ github.repository }}/actions/runs?per_page=100" \
+            --paginate -q ".workflow_runs[] | select(.id != ${{ github.run_id }}) | .id" | \
+            xargs -I {} gh api -X DELETE \
+            "/repos/${{ github.repository }}/actions/runs/{}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}"
+      
+      # 彻底清除所有缓存（核心功能）
       - name: Purge All Caches
-        uses: ethomson/clear-gha-caches@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          keep_min_caches: 0
-          remove_older_than: 0
-          force: true
-
-      # 清理所有发布
+        run: |
+          # 获取所有缓存ID
+          cache_ids=$(gh api -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "/repos/${{ github.repository }}/actions/caches" \
+            --paginate -q '.cache_entries[].id' 2>/dev/null || echo "")
+          
+          if [ -n "$cache_ids" ]; then
+            # 逐个删除缓存
+            echo "$cache_ids" | xargs -I {} gh api -X DELETE \
+              "/repos/${{ github.repository }}/actions/caches/{}" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}"
+            echo "✅ Deleted $(echo "$cache_ids" | wc -l) caches"
+          else
+            echo "ℹ️ No caches found"
+          fi
+      
+      # 删除所有发布
       - name: Delete All Releases
-        uses: YoavShapira/gh-actions-delete-releases@v1
-        with:
-          keep_min_releases: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      # 清理所有标签
+        run: |
+          release_ids=$(gh api -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "/repos/${{ github.repository }}/releases" \
+            --paginate -q '.[].id' 2>/dev/null || echo "")
+          
+          if [ -n "$release_ids" ]; then
+            echo "$release_ids" | xargs -I {} gh api -X DELETE \
+              "/repos/${{ github.repository }}/releases/{}" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}"
+            echo "✅ Deleted $(echo "$release_ids" | wc -l) releases"
+          else
+            echo "ℹ️ No releases found"
+          fi
+      
+      # 删除所有标签
       - name: Delete All Tags
-        uses: YoavShapira/gh-actions-delete-tags@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          keep_min_tags: 0
+        run: |
+          tags=$(gh api -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "/repos/${{ github.repository }}/git/refs/tags" \
+            --paginate -q '.[].ref' 2>/dev/null || echo "")
+          
+          if [ -n "$tags" ]; then
+            # 直接删除标签引用
+            echo "$tags" | sed 's|refs/tags/||' | xargs -I {} gh api -X DELETE \
+              "/repos/${{ github.repository }}/git/refs/tags/{}" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}"
+            echo "✅ Deleted $(echo "$tags" | wc -l) tags"
+          else
+            echo "ℹ️ No tags found"
+          fi
