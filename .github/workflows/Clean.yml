@@ -16,20 +16,20 @@ jobs:
     steps:
       - name: Nuclear cleanup
         run: |
-          sudo apt update && sudo apt install jq -y
+          sudo apt update
+          sudo apt install jq -y
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-          sudo apt update && sudo apt install gh -y
+          sudo apt update
+          sudo apt install gh -y
           
           gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/runs?per_page=100" \
             --paginate -q ".workflow_runs[] | select(.id != $RUN_ID) | .id" | \
             xargs -I {} gh api -X DELETE "/repos/$REPO/actions/runs/{}" -H "Authorization: Bearer $GH_TOKEN"
           
-          gh api \
-            --method DELETE \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            "/repos/$REPO/actions/caches" \
-            -f ref="$GITHUB_REF"
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/caches" \
+            --paginate -q '.cache_entries[].id' | \
+            xargs -I {} gh api -X DELETE "/repos/$REPO/actions/caches/{}" -H "Authorization: Bearer $GH_TOKEN"
           
           gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" \
             --paginate -q '.[].id' | \
@@ -45,4 +45,3 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
-          GITHUB_REF: ${{ github.ref }}
