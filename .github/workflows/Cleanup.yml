@@ -1,36 +1,46 @@
-name: Clean Repo
+name: Auto Cleanup Repository
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # UTC 0点 → 中国时间8点
-    - cron: '0 12 * * *' # UTC 12点 → 中国时间20点
+    - cron: '0 16,4 * * *'  # UTC时间每天4:00和16:00运行（对应北京时间12:00和24:00）
   workflow_dispatch:
 
-permissions:
-  actions: write
-  contents: write
-
 jobs:
-  clean:
+  cleanup:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      packages: write
     steps:
-      - name: Setup GH CLI
-        uses: actions/setup-gh@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Delete workflows
+      - name: Cleanup Workflow Runs
         run: |
-          gh run list --repo "${{ github.repository }}" --all --json databaseId \
-          | jq -r '.[].databaseId' \
-          | grep -v "${{ github.run_id }}" \
-          | xargs -I{} gh run delete {} --yes --repo "${{ github.repository }}"
+          gh api -X DELETE /repos/${{ github.repository }}/actions/runs \
+            -f "per_page=100" \
+            --paginate \
+            --jq ".workflow_runs[] | select(.status != \"in_progress\") | .id" \
+            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/actions/runs/{}
 
-      - name: Delete releases
-        run: gh release list --repo "${{ github.repository }}" --json id | jq -r '.[].id' | xargs -I{} gh release delete {} --yes --repo "${{ github.repository }}"
+      - name: Delete Releases
+        run: |
+          gh api -X GET /repos/${{ github.repository }}/releases --paginate \
+            --jq ".[].id" \
+            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/releases/{}
 
-      - name: Delete tags
-        run: gh tag list --repo "${{ github.repository }}" --json name | jq -r '.[].name' | xargs -I{} gh tag delete {} --force --yes --repo "${{ github.repository }}"
+      - name: Delete Tags
+        run: |
+          gh api -X GET /repos/${{ github.repository }}/git/refs/tags --paginate \
+            --jq ".[].ref" \
+            | sed 's/refs\/tags\///' \
+            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/{}
 
-      - name: Clean caches
-        run: gh cache clean --all --yes --repo "${{ github.repository }}"
+      - name: Cleanup Caches
+        run: |
+          gh actions cache list --all --limit 100 | grep -v " Total " | awk '{print $1}' \
+            | xargs -I {} gh actions cache delete --cache-id {} --confirm
+
+      - name: Cleanup Artifacts
+        run: |
+          gh api -X GET /repos/${{ github.repository }}/actions/artifacts --paginate \
+            --jq ".artifacts[].id" \
+            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/actions/artifacts/{}
