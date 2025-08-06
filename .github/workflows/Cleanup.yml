@@ -12,7 +12,14 @@ jobs:
       actions: write
       contents: write
       packages: write
+    env:
+      GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}  # 关键修复：添加认证令牌
     steps:
+      - name: Setup GitHub CLI
+        run: |
+          sudo apt update
+          sudo apt install -y gh
+
       - name: Cleanup Workflow Runs
         run: |
           gh api -X DELETE /repos/${{ github.repository }}/actions/runs \
