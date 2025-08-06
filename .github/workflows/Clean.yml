@@ -1,40 +1,30 @@
-name: Nuclear Clean
-
+name: Auto Cleanup
 on:
   schedule:
-    - cron: '0 16,4 * * *'
+    - cron: "0 0,12 * * *"
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: write
+  packages: write
+
 jobs:
-  obliterate:
+  cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: write
-      contents: write
-      packages: write
-      
+    timeout-minutes: 10
+
     steps:
-      - name: Install GitHub CLI
-        run: |
-          type -p gh >/dev/null || (sudo apt update && sudo apt install -y gh)
-          
-      - name: Execute Nuclear Clean
-        run: |
-          # 强制初始化GitHub CLI
-          gh auth setup-git --token "$GITHUB_TOKEN"
-          
-          # 清理工作流运行
-          CURRENT_RUN_ID=${{ github.run_id }}
-          gh run list -L 100 -q ".[] | select(.databaseId != $CURRENT_RUN_ID).databaseId" | xargs -r gh run delete -y
-          
-          # 清理缓存
-          gh cache delete --all --confirm
-          
-          # 清理发布和标签
-          gh release list -L 100 -q ".[].tagName" | xargs -r gh release delete -y --cleanup-tag
-          
-          # 清理残留标签
-          gh api /repos/${{ github.repository }}/tags?per_page=100 -q ".[].name" | xargs -r -I{} gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/{}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/checkout@v4
+    - uses: cli/cli/action@v1
+    
+    - run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+    - run: gh api -X POST "/repos/$GITHUB_REPOSITORY/actions/runs/delete" -f 'days_old=0'
+    - run: gh release list --limit 999 | awk '{print $1}' | xargs -I {} gh release delete --yes {}
+    - run: |
+        git fetch --tags
+        git tag | xargs git tag -d
+        git push origin --delete $(git tag) 2>/dev/null || true
+    - run: gh actions cache list --limit 999 | awk '{print $NF}' | xargs -I {} gh actions cache delete --id {} --confirm
+    - run: find .github/workflows -type f -not -name 'cleanup.yml' -delete || true
+    - run: gh api -X POST "/repos/$GITHUB_REPOSITORY/packages/cleanup" -f 'expiry_days=0'
