@@ -16,8 +16,17 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - uses: cli/cli/action@v1
-    
+
+    # 修复：直接安装GH CLI
+    - name: Install GitHub CLI
+      run: |
+        sudo apt update
+        sudo apt install -y curl ca-certificates
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        sudo apt update
+        sudo apt install gh -y
+
     - run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
     - run: gh api -X POST "/repos/$GITHUB_REPOSITORY/actions/runs/delete" -f 'days_old=0'
     - run: gh release list --limit 999 | awk '{print $1}' | xargs -I {} gh release delete --yes {}
