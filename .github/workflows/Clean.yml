@@ -30,13 +30,6 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
       
-      - name: Delete All Packages
-        uses: actions/delete-package-versions@v4
-        with:
-          package-names: "*"
-          delete-only-pre-release-versions: false
-          num-versions-to-keep: 0
-        
       - name: Purge All Caches
         uses: actions/cache@v4
         with:
@@ -46,15 +39,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Remove Releases and Tags
+      - name: Remove Releases
         run: |
           gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" \
             --paginate -q '.[].id' | \
             xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}" -H "Authorization: Bearer $GH_TOKEN"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           
-          tags=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/tags" --paginate -q '.[].name' 2>/dev/null)
-          [ -n "$tags" ] && echo "$tags" | \
-            xargs -I {} gh api -X DELETE "/repos/$REPO/git/refs/tags/{}" -H "Authorization: Bearer $GH_TOKEN"
+      - name: Delete All Tags
+        run: |
+          tags=$(gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/tags" --paginate -q '.[].name' 2>/dev/null || true)
+          if [ -n "$tags" ]; then
+            echo "$tags" | xargs -I {} gh api -X DELETE "/repos/$REPO/git/refs/tags/{}" -H "Authorization: Bearer $GH_TOKEN"
+          else
+            echo "No tags found"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
