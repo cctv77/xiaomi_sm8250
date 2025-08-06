@@ -6,8 +6,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  clean:
+  obliterate:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      packages: write
+
     steps:
       - name: Clean Workflow Runs
         run: |
@@ -21,21 +26,21 @@ jobs:
 
       - name: Purge All Caches
         run: |
-          gh cache list --json id -q ".[].id" | xargs -I {} gh cache delete {}
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/caches?per_page=100" -q '.cache_entries[].id' | xargs -I {} gh api -X DELETE "/repos/$REPO/actions/caches/{}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
 
       - name: Delete All Releases
         run: |
-          gh release list --json id -q ".[].id" | xargs -I {} gh release delete {}
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" -q '.[].id' | xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
 
       - name: Delete All Tags
         run: |
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/git/refs/tags" -q ".[].ref" | xargs -I {} gh api -X DELETE "/repos/$REPO/git/{}"
+          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/git/refs/tags" -q '.[].ref' | xargs -I {} gh api -X DELETE "/repos/$REPO/git/{}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
