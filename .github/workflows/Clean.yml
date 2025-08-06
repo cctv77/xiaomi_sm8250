@@ -6,41 +6,60 @@ on:
   workflow_dispatch:
 
 jobs:
-  obliterate:
+  clean:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       actions: write
       contents: write
-      packages: write
-
+    
     steps:
-      - name: Clean Workflow Runs
+      - name: Setup Environment
         run: |
           sudo apt update
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           sudo apt install gh -y
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/runs" -q ".workflow_runs[].id" | xargs -I {} gh api -X DELETE "/repos/$REPO/actions/runs/{}"
+          gh auth login --with-token <<< "$TOKEN"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Secure Delete Workflow Runs
+        run: |
+          gh run list --json databaseId -q ".[].databaseId" | 
+            grep -v $RUN_ID |
+            xargs -I {} gh api \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              --method DELETE \
+              /repos/$REPO/actions/runs/{}
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
           REPO: ${{ github.repository }}
 
-      - name: Purge All Caches
+      - name: Guaranteed Cache Purge
         run: |
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/actions/caches?per_page=100" -q '.cache_entries[].id' | xargs -I {} gh api -X DELETE "/repos/$REPO/actions/caches/{}"
+          gh cache delete --all --confirm
+        
+      - name: Delete Releases
+        run: |
+          gh api -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            /repos/$REPO/releases \
+            --paginate -q '.[].id' | 
+            xargs -I {} gh api -X DELETE /repos/$REPO/releases/{}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-
-      - name: Delete All Releases
+        
+      - name: Delete Tags
         run: |
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/releases" -q '.[].id' | xargs -I {} gh api -X DELETE "/repos/$REPO/releases/{}"
+          gh api -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            /repos/$REPO/git/refs/tags \
+            --paginate -q '.[].ref' | 
+            xargs -I {} gh api -X DELETE /repos/$REPO/git/refs/tags/{}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-
-      - name: Delete All Tags
-        run: |
-          gh api -H "Authorization: Bearer $GH_TOKEN" "/repos/$REPO/git/refs/tags" -q '.[].ref' | xargs -I {} gh api -X DELETE "/repos/$REPO/git/{}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
