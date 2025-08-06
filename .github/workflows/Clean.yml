@@ -8,18 +8,33 @@ on:
 jobs:
   obliterate:
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 5
     permissions:
       actions: write
       contents: write
       packages: write
-
+      
     steps:
-      - name: Nuclear Clean
+      - name: Install GitHub CLI
         run: |
-          gh run list -L 100 -q ".[] | select(.databaseId != ${{ github.run_id }}).databaseId" | xargs -r gh run delete -y 2>/dev/null || true
-          gh cache delete -a -f 2>/dev/null || true
-          gh release list -L 100 -q ".[].tagName" | xargs -r gh release delete -y --cleanup-tag 2>/dev/null || true
-          gh api -H "Accept: application/vnd.github.v3+json" "/repos/${{ github.repository }}/tags?per_page=100" -q ".[].name" | xargs -r -I{} gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/{}" 2>/dev/null || true
+          type -p gh >/dev/null || (sudo apt update && sudo apt install -y gh)
+          
+      - name: Execute Nuclear Clean
+        run: |
+          # 强制初始化GitHub CLI
+          gh auth setup-git --token "$GITHUB_TOKEN"
+          
+          # 清理工作流运行
+          CURRENT_RUN_ID=${{ github.run_id }}
+          gh run list -L 100 -q ".[] | select(.databaseId != $CURRENT_RUN_ID).databaseId" | xargs -r gh run delete -y
+          
+          # 清理缓存
+          gh cache delete --all --confirm
+          
+          # 清理发布和标签
+          gh release list -L 100 -q ".[].tagName" | xargs -r gh release delete -y --cleanup-tag
+          
+          # 清理残留标签
+          gh api /repos/${{ github.repository }}/tags?per_page=100 -q ".[].name" | xargs -r -I{} gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/{}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
