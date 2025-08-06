@@ -1,4 +1,4 @@
-name: Repository Cleanup
+name: Official Repository Cleanup
 
 on:
   schedule:
@@ -9,39 +9,23 @@ on:
 permissions:
   actions: write
   contents: write
+  pull-requests: write
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 必须获取所有标签历史
-
-      - name: Install GH CLI
-        run: |
-          if ! command -v gh &> /dev/null; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-            sudo apt update && sudo apt install -y gh
-          fi
-
-      - name: Authenticate GH CLI
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token --scope repo,workflow
+      - name: Authenticate with GitHub CLI
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token --scope repo,workflow,delete-repo
 
       - name: Clean workflows
-        run: |
-          gh run list --repo "${{ github.repository }}" --all \
-            --exclude-event workflow_dispatch,schedule \
-            --exclude "${{ github.run_id }}" \  # 排除当前任务
-            --json databaseId | jq -r '.[].databaseId' | xargs -I{} gh run delete {} --yes --repo "${{ github.repository }}"
+        run: gh run list --repo "${{ github.repository }}" --all --json databaseId | jq -r '.[].databaseId' | xargs -I{} gh run delete {} --yes
 
       - name: Clean releases
-        run: gh release list --repo "${{ github.repository }}" --json id | jq -r '.[].id' | xargs -I{} gh release delete {} --yes --repo "${{ github.repository }}"
+        run: gh release list --repo "${{ github.repository }}" --json id | jq -r '.[].id' | xargs -I{} gh release delete {} --yes
 
       - name: Clean tags
-        run: gh tag list --repo "${{ github.repository }}" --json name | jq -r '.[].name' | xargs -I{} gh tag delete {} --force --yes --repo "${{ github.repository }}"
+        run: gh tag list --repo "${{ github.repository }}" --json name | jq -r '.[].name' | xargs -I{} gh tag delete {} --force --yes
 
       - name: Clean caches
         run: gh cache clean --all --yes --repo "${{ github.repository }}"
