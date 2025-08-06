@@ -2,7 +2,7 @@ name: Auto Cleanup Repository
 
 on:
   schedule:
-    - cron: '0 16,4 * * *'  # UTC时间每天4:00和16:00运行（对应北京时间12:00和24:00）
+    - cron: '0 16,4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -12,42 +12,170 @@ jobs:
       actions: write
       contents: write
       packages: write
-    env:
-      GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}  # 关键修复：添加认证令牌
     steps:
-      - name: Setup GitHub CLI
+      - name: Setup environment
         run: |
           sudo apt update
-          sudo apt install -y gh
+          sudo apt install -y gh jq curl
+          
+      - name: Configure GitHub CLI
+        run: |
+          echo "开始配置GitHub认证..."
+          echo ${{ secrets.ADMIN_TOKEN }} | gh auth login --with-token
+          gh config set prompt disabled
+          AUTH_STATUS=$(gh auth status 2>&1)
+          if [[ $AUTH_STATUS == *"Logged in"* ]]; then
+            echo "认证成功"
+          else
+            echo "认证失败: $AUTH_STATUS"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
 
       - name: Cleanup Workflow Runs
         run: |
-          gh api -X DELETE /repos/${{ github.repository }}/actions/runs \
-            -f "per_page=100" \
-            --paginate \
-            --jq ".workflow_runs[] | select(.status != \"in_progress\") | .id" \
-            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/actions/runs/{}
+          echo "=== 开始删除工作流运行记录 ==="
+          total_count=0
+          error_count=0
+          success_count=0
+          
+          while :; do
+            RUNS=$(gh api "/repos/${{ github.repository }}/actions/runs?per_page=100")
+            RUN_IDS=$(echo "$RUNS" | jq -r '.workflow_runs[] | select(.status != "in_progress") | .id')
+            RUN_COUNT=$(echo "$RUN_IDS" | wc -w)
+            
+            if [ "$RUN_COUNT" -eq 0 ]; then
+              echo "所有运行记录已删除"
+              break
+            fi
+            
+            echo "本次处理: $RUN_COUNT 条记录"
+            
+            for ID in $RUN_IDS; do
+              if gh api -X DELETE "/repos/${{ github.repository }}/actions/runs/$ID" --silent; then
+                success_count=$((success_count+1))
+                echo "✅ 删除成功: $ID"
+              else
+                error_count=$((error_count+1))
+                echo "❌ 删除失败: $ID"
+              fi
+            done
+            
+            total_count=$((total_count + RUN_COUNT))
+          done
+          
+          echo "删除完成: 共尝试 $total_count 条 | 成功 $success_count | 失败 $error_count"
+          if [ "$error_count" -gt 0 ]; then
+            echo "::warning::存在删除失败的运行记录"
+          fi
 
       - name: Delete Releases
         run: |
-          gh api -X GET /repos/${{ github.repository }}/releases --paginate \
-            --jq ".[].id" \
-            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/releases/{}
+          echo "=== 开始删除发布记录 ==="
+          ERROR=0
+          RELEASES=$(gh api "/repos/${{ github.repository }}/releases" --paginate)
+          RELEASE_IDS=$(echo "$RELEASES" | jq -r '.[].id')
+          COUNT=$(echo "$RELEASE_IDS" | wc -w)
+          
+          echo "发现 $COUNT 个发布需要删除"
+          
+          for ID in $RELEASE_IDS; do
+            echo "正在删除发布: $ID"
+            if ! gh api -X DELETE "/repos/${{ github.repository }}/releases/$ID" --silent; then
+              echo "❌ 删除失败: $ID"
+              ERROR=1
+            else
+              echo "✅ 删除成功: $ID"
+            fi
+          done
+          
+          if [ "$ERROR" -eq 0 ] && [ -n "$RELEASE_IDS" ]; then
+            echo "所有发布已成功删除"
+          elif [ -z "$RELEASE_IDS" ]; then
+            echo "没有发布需要删除"
+          else
+            echo "::warning::部分发布删除失败"
+          fi
 
       - name: Delete Tags
         run: |
-          gh api -X GET /repos/${{ github.repository }}/git/refs/tags --paginate \
-            --jq ".[].ref" \
-            | sed 's/refs\/tags\///' \
-            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/{}
+          echo "=== 开始删除标签 ==="
+          ERROR=0
+          TAGS=$(gh api "/repos/${{ github.repository }}/git/refs/tags" --paginate)
+          TAG_REFS=$(echo "$TAGS" | jq -r '.[].ref')
+          TAG_NAMES=$(echo "$TAG_REFS" | sed 's|refs/tags/||')
+          COUNT=$(echo "$TAG_NAMES" | wc -w)
+          
+          echo "发现 $COUNT 个标签需要删除"
+          
+          for NAME in $TAG_NAMES; do
+            echo "正在删除标签: $NAME"
+            if ! gh api -X DELETE "/repos/${{ github.repository }}/git/refs/tags/$NAME" --silent; then
+              echo "❌ 删除失败: $NAME"
+              ERROR=1
+            else
+              echo "✅ 删除成功: $NAME"
+            fi
+          done
+          
+          if [ "$ERROR" -eq 0 ] && [ -n "$TAG_NAMES" ]; then
+            echo "所有标签已成功删除"
+          elif [ -z "$TAG_NAMES" ]; then
+            echo "没有标签需要删除"
+          else
+            echo "::warning::部分标签删除失败"
+          fi
 
       - name: Cleanup Caches
         run: |
-          gh actions cache list --all --limit 100 | grep -v " Total " | awk '{print $1}' \
-            | xargs -I {} gh actions cache delete --cache-id {} --confirm
+          echo "=== 开始清理缓存 ==="
+          CACHE_LIST=$(gh api "/repos/${{ github.repository }}/actions/caches?per_page=100" --paginate)
+          CACHE_IDS=$(echo "$CACHE_LIST" | jq -r '.actions_caches[].id')
+          COUNT=$(echo "$CACHE_IDS" | wc -w)
+          
+          if [ "$COUNT" -eq 0 ]; then
+            echo "没有缓存需要清理"
+            exit 0
+          fi
+          
+          echo "发现 $COUNT 个缓存需要清理"
+          echo "正在批量删除..."
+          
+          if echo "$CACHE_IDS" | xargs -I {} gh api -X DELETE "/repos/${{ github.repository }}/actions/caches/{}" --silent; then
+            echo "✅ 所有缓存清理完成"
+          else
+            echo "❌ 缓存清理失败"
+            echo "::warning::缓存清理失败"
+          fi
 
       - name: Cleanup Artifacts
         run: |
-          gh api -X GET /repos/${{ github.repository }}/actions/artifacts --paginate \
-            --jq ".artifacts[].id" \
-            | xargs -I {} gh api -X DELETE /repos/${{ github.repository }}/actions/artifacts/{}
+          echo "=== 开始清理构建产物 ==="
+          ERROR=0
+          ARTIFACTS=$(gh api "/repos/${{ github.repository }}/actions/artifacts?per_page=100" --paginate)
+          ARTIFACT_IDS=$(echo "$ARTIFACTS" | jq -r '.artifacts[].id')
+          COUNT=$(echo "$ARTIFACT_IDS" | wc -w)
+          
+          if [ "$COUNT" -eq 0 ]; then
+            echo "没有构建产物需要清理"
+            exit 0
+          fi
+          
+          echo "发现 $COUNT 个构建产物需要清理"
+          
+          for ID in $ARTIFACT_IDS; do
+            echo "正在清理产物: $ID"
+            if ! gh api -X DELETE "/repos/${{ github.repository }}/actions/artifacts/$ID" --silent; then
+              echo "❌ 清理失败: $ID"
+              ERROR=1
+            else
+              echo "✅ 清理成功: $ID"
+            fi
+          done
+          
+          if [ "$ERROR" -eq 0 ]; then
+            echo "✅ 所有构建产物清理完成"
+          else
+            echo "::warning::部分构建产物清理失败"
+          fi
